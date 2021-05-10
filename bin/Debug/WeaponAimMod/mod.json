@@ -1,0 +1,9 @@
+{
+  "Id": "Converts vanilla 'laser' projectile weapons to pulsed laser rilfes",
+  "DisplayName": "Laser Mod",
+  "Author": "FLSoz",
+  "Version": "0.0.2",
+  "Enable": true,
+  "AssemblyName": "LaserMod.dll",
+  "EntryMethod": "LaserMod.src.IngressPoint.Main"
+}

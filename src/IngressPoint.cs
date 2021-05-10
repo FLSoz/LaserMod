@@ -430,7 +430,6 @@ namespace LaserMod.src
             beamMaterial = new Material(assetBundle.LoadAsset<Material>("BeamMaterial")); */
 
             PatchBlocks();
-            Console.WriteLine("##### VANILLA PATCHES COMPLETE");
         }
     }
 
