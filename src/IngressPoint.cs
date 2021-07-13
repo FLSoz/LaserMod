@@ -2,7 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Harmony;
+using HarmonyLib;
 using UnityEngine;
 using UnityEngine.Events;
 using System.IO;
@@ -425,7 +425,7 @@ namespace LaserMod.src
 
         public static void Main()
         {
-            HarmonyInstance.Create("flsoz.ttmm.lasermod.mod").PatchAll(Assembly.GetExecutingAssembly());
+            new Harmony("flsoz.ttmm.lasermod.mod").PatchAll(Assembly.GetExecutingAssembly());
             /* assetBundle = AssetBundle.LoadFromFile(Path.Combine(assets_path, "beams"));
             beamMaterial = new Material(assetBundle.LoadAsset<Material>("BeamMaterial")); */
 
