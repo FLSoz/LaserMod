@@ -39,8 +39,9 @@ namespace LaserMod.src
         private readonly static FieldInfo m_LifeTime = typeof(Projectile).GetField("m_LifeTime", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private readonly static FieldInfo m_Damage = typeof(WeaponRound).GetField("m_Damage", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private readonly static FieldInfo m_DamageType = typeof(WeaponRound).GetField("m_DamageType", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-        private readonly static FieldInfo m_Range = typeof(BeamWeapon).GetField("m_Range", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        internal readonly static FieldInfo m_Range = typeof(BeamWeapon).GetField("m_Range", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         public readonly static FieldInfo m_DamagePerSecond = typeof(BeamWeapon).GetField("m_DamagePerSecond", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        public readonly static FieldInfo m_BeamLine = typeof(BeamWeapon).GetField("m_BeamLine", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         public readonly static FieldInfo m_FadeOutTime = typeof(BeamWeapon).GetField("m_FadeOutTime", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private readonly static FieldInfo m_DamageTypeBeam = typeof(BeamWeapon).GetField("m_DamageType", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private readonly static FieldInfo m_BeamParticlesPrefab = typeof(BeamWeapon).GetField("m_BeamParticlesPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
@@ -51,6 +52,7 @@ namespace LaserMod.src
         private readonly static FieldInfo recoilAnim = typeof(CannonBarrel).GetField("recoilAnim", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private readonly static FieldInfo animState = typeof(CannonBarrel).GetField("animState", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private readonly static FieldInfo m_Animator = typeof(ModuleWeaponGun).GetField("m_Animator", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
 
         internal struct ParticleColorOverride
         {
@@ -83,8 +85,6 @@ namespace LaserMod.src
 
             string blockName = (string) TrimForSafeSearch.Invoke(null, new object[] { original.name });
             GameObject copy = GameObject.Instantiate(original);
-
-            original.SetActive(false);
             copy.SetActive(false);
 
             Dictionary<string, GameObject> blockNameDict = (Dictionary<string, GameObject>)_gameBlocksNameDict.GetValue(null);
@@ -98,6 +98,7 @@ namespace LaserMod.src
 
         internal static void LowLevelApplyPatch(PatchProps props, GameObject target)
         {
+            target.transform.DeletePool<Transform>();
             LineRenderer sourceRenderer = props.template.GetComponent<LineRenderer>();
             FireData fireData = target.GetComponentInChildren<FireData>();
             ModuleWeaponGun gun = target.GetComponentInChildren<ModuleWeaponGun>();
@@ -208,15 +209,15 @@ namespace LaserMod.src
                                 spawnPoint.localPosition += props.adjustSpawn;
                             }
 
-                            LineRenderer renderer = spawnPoint.gameObject.AddComponent<LineRenderer>();
+                            barrel.beamWeapon = spawnPoint.gameObject.AddComponent<BeamWeapon>();
+                            LineRenderer renderer = barrel.beamWeapon.gameObject.AddComponent<LineRenderer>();
 
                             GameObjectJSON.ShallowCopy(typeof(LineRenderer), sourceRenderer, renderer, true);
                             renderer.material = sourceRenderer.material;
                             renderer.sharedMaterial = sourceRenderer.material;
                             renderer.widthMultiplier *= scale;
                             renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-
-                            barrel.beamWeapon = spawnPoint.gameObject.AddComponent<BeamWeapon>();
+                            m_BeamLine.SetValue(barrel.beamWeapon, renderer);
 
                             if (copySystem != null)
                             {
@@ -263,6 +264,7 @@ namespace LaserMod.src
                     fireData.m_MuzzleVelocity = 0f;
                 }
             }
+            target.transform.CreatePool<Transform>(1);
         }
 
         public static void PatchBlocks()
@@ -450,6 +452,26 @@ namespace LaserMod.src
                 IngressPoint.LowLevelApplyPatch(props, block.Prefab);
             }
             return true;
+        }
+    }
+
+
+    [HarmonyPatch(typeof(BeamWeapon), "OnPool")]
+    public static class PatchPool
+    {
+        public static void Prefix(BeamWeapon __instance)
+        {
+            LineRenderer renderer = (LineRenderer) IngressPoint.m_BeamLine.GetValue(__instance);
+            if (renderer == null)
+            {
+                renderer = __instance.GetComponent<LineRenderer>();
+                if (renderer != null)
+                {
+                    IngressPoint.m_BeamLine.SetValue(__instance, renderer);
+                    renderer.SetPosition(0, Vector3.zero);
+                    renderer.SetPosition(1, new Vector3(0f, 0f, (float) IngressPoint.m_Range.GetValue(__instance)));
+                }
+            }
         }
     }
 
