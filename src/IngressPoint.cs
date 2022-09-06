@@ -6,8 +6,7 @@ using HarmonyLib;
 using UnityEngine;
 using UnityEngine.Events;
 using System.IO;
-using Nuterra.BlockInjector;
-
+using BlockChangePatcher;
 
 namespace LaserMod.src
 {
@@ -24,13 +23,12 @@ namespace LaserMod.src
         public Vector3 adjustMuzzleFlash;
         public bool colorOverride;
         public Color color;
+        public float range;
     }
 
     sealed class IngressPoint
     {
-        internal static string asm_path = Assembly.GetExecutingAssembly().Location.Replace("LaserMod.dll", "");
-        internal static string assets_path = Path.Combine(asm_path, "Assets");
-        public static bool hitscan = false;
+        public static bool hitscan = true;
 
         public static BeamWeapon defaultTemplate;
 
@@ -46,9 +44,6 @@ namespace LaserMod.src
         private readonly static FieldInfo m_DamageTypeBeam = typeof(BeamWeapon).GetField("m_DamageType", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private readonly static FieldInfo m_BeamParticlesPrefab = typeof(BeamWeapon).GetField("m_BeamParticlesPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private readonly static FieldInfo m_HitParticlesPrefab = typeof(BeamWeapon).GetField("m_HitParticlesPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-        private readonly static MethodInfo TrimForSafeSearch = typeof(BlockPrefabBuilder).GetMethod("TrimForSafeSearch", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-        private readonly static FieldInfo _gameBlocksIDDict = typeof(BlockPrefabBuilder).GetField("_gameBlocksIDDict", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-        private readonly static FieldInfo _gameBlocksNameDict = typeof(BlockPrefabBuilder).GetField("_gameBlocksNameDict", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
         private readonly static FieldInfo recoilAnim = typeof(CannonBarrel).GetField("recoilAnim", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private readonly static FieldInfo animState = typeof(CannonBarrel).GetField("animState", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private readonly static FieldInfo m_Animator = typeof(ModuleWeaponGun).GetField("m_Animator", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
@@ -78,32 +73,14 @@ namespace LaserMod.src
             }
         }
 
-        // Manage the block table for Block Injector to avoid contamination
-        internal static void ApplyPatch(PatchProps props)
-        {
-            BlockPrefabBuilder.GameBlocksByID(props.laserId, out GameObject original);
-
-            string blockName = (string) TrimForSafeSearch.Invoke(null, new object[] { original.name });
-            GameObject copy = GameObject.Instantiate(original);
-            copy.SetActive(false);
-
-            Dictionary<string, GameObject> blockNameDict = (Dictionary<string, GameObject>)_gameBlocksNameDict.GetValue(null);
-            Dictionary<int, GameObject> blockIdDict = (Dictionary<int, GameObject>)_gameBlocksIDDict.GetValue(null);
-
-            blockIdDict[props.laserId] = copy;
-            blockNameDict[blockName] = copy;
-
-            LowLevelApplyPatch(props, original);
-        }
-
         internal static void LowLevelApplyPatch(PatchProps props, GameObject target)
         {
-            target.transform.DeletePool<Transform>();
             LineRenderer sourceRenderer = props.template.GetComponent<LineRenderer>();
             FireData fireData = target.GetComponentInChildren<FireData>();
             ModuleWeaponGun gun = target.GetComponentInChildren<ModuleWeaponGun>();
 
             Console.WriteLine($"Patching Laser {target.name}");
+            Console.WriteLine($"  props: {props.laserId}, widthMultiplier: {props.widthMultiplier}, dpsMultiplier: {props.dpsMultiplier}, colorOverride: {props.colorOverride}, color: {props.color}, adjustSpawn: {props.adjustSpawn}, adjustMuzzleFlash: {props.adjustMuzzleFlash}");
 
             float scale = props.widthMultiplier > 0 ? props.widthMultiplier : 1.0f;
             float cooldown = 0.5f;
@@ -117,7 +94,7 @@ namespace LaserMod.src
                 WeaponRound round = fireData.m_BulletPrefab;
                 if (round && round is Projectile projectile)
                 {
-                    float range = 1000.0f;
+                    float range = props.range > 0 ? props.range : 1000.0f;
                     float lifetime = (float)m_LifeTime.GetValue(projectile);
                     float speed = fireData.m_MuzzleVelocity;
                     if (lifetime > 0f)
@@ -212,7 +189,7 @@ namespace LaserMod.src
                             barrel.beamWeapon = spawnPoint.gameObject.AddComponent<BeamWeapon>();
                             LineRenderer renderer = barrel.beamWeapon.gameObject.AddComponent<LineRenderer>();
 
-                            GameObjectJSON.ShallowCopy(typeof(LineRenderer), sourceRenderer, renderer, true);
+                            ShallowCopy(typeof(LineRenderer), sourceRenderer, renderer, true);
                             renderer.material = sourceRenderer.material;
                             renderer.sharedMaterial = sourceRenderer.material;
                             renderer.widthMultiplier *= scale;
@@ -248,13 +225,14 @@ namespace LaserMod.src
                                 newFlash.SetActive(false);
                             }
 
-                            GameObjectJSON.ShallowCopy(typeof(BeamWeapon), props.template, barrel.beamWeapon, true);
+                            ShallowCopy(typeof(BeamWeapon), props.template, barrel.beamWeapon, true);
 
                             m_BeamParticlesPrefab.SetValue(barrel.beamWeapon, null);
 
                             m_Range.SetValue(barrel.beamWeapon, range);
                             m_DamageTypeBeam.SetValue(barrel.beamWeapon, damageType);
                             m_DamagePerSecond.SetValue(barrel.beamWeapon, -damage);
+                            // fade out will always take 0.2s, or cooldown / 2.5, whichever is shorter
                             m_FadeOutTime.SetValue(barrel.beamWeapon, Mathf.Min(0.2f, cooldown / 2.5f));
                         }
                     }
@@ -264,31 +242,187 @@ namespace LaserMod.src
                     fireData.m_MuzzleVelocity = 0f;
                 }
             }
-            target.transform.CreatePool<Transform>(1);
         }
 
-        public static void PatchBlocks()
+        // copy the shallow copy from BlockInjector
+        private static void ShallowCopy(Type sharedType, object source, object target, bool DeclaredVarsOnly)
+        {
+            var bf = BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic;
+            if (DeclaredVarsOnly) bf |= BindingFlags.DeclaredOnly;
+            var fields = sharedType.GetFields(bf);
+            foreach (var field in fields)
+            {
+                try
+                {
+                    field.SetValue(target, field.GetValue(source));
+                }
+                catch { }
+            }
+            var props = sharedType.GetProperties(bf);
+            foreach (var prop in props)
+            {
+                try
+                {
+                    if (prop.CanRead && prop.CanWrite)
+                        prop.SetValue(target, prop.GetValue(source), null);
+                }
+                catch { }
+            }
+        }
+
+        private static PatchProps GetPropsByFaction(FactionSubTypes corp, LineRenderer laserProjectile, bool useFlashOverrides)
+        {
+            PatchProps props = new PatchProps
+            {
+                template = IngressPoint.defaultTemplate,
+                adjustSpawn = new Vector3(0, 0, -0.25f),
+                widthMultiplier = laserProjectile.endWidth * 2.0f,
+                dpsMultiplier = 1.0f,
+                colorOverride = true,
+                color = laserProjectile.endColor
+            };
+
+            switch (corp)
+            {
+                case FactionSubTypes.GSO:
+                    // normal default range
+                    // thin green
+                    props.dpsMultiplier = 0.75f;
+                    props.range = 500.0f;
+                    props.template = orangeBeam;
+                    props.widthMultiplier = 0.3f;
+                    props.color = new Color(64.0f / 255.0f, 1.0f, 134.0f / 255.0f, 1.0f);
+                    break;
+                case FactionSubTypes.GC:
+                    // short default range
+                    // thick orange
+                    props.template = orangeBeam;
+                    props.widthMultiplier = 0.7f;
+                    props.range = 450.0f;
+                    break;
+                case FactionSubTypes.VEN:
+                    // short default range
+                    // thin orange
+                    props.dpsMultiplier = 0.85f;
+                    props.template = orangeBeam;
+                    props.widthMultiplier = 0.45f;
+                    props.range = 400.0f;
+                    props.colorOverride = false;
+                    break;
+                case FactionSubTypes.HE:
+                    // long default range
+                    // recolor red, make thick
+                    props.dpsMultiplier = 1.5f;
+                    props.widthMultiplier = 1.0f;
+                    props.color = new Color(1.0f, 0.3f, 0.3f, 1.0f);
+                    props.range = 750.0f;
+                    break;
+                case FactionSubTypes.BF:
+                    // normal default range
+                    props.range = 550.0f;
+                    props.template = blueBeam;
+                    if (useFlashOverrides)
+                    {
+                        props.flashOverride = BFFlash;
+                    }
+                    props.widthMultiplier = 1.0f;
+                    props.hitParticlesOverride = BFHitParticles;
+                    props.colorOverride = false;
+                    break;
+                case FactionSubTypes.EXP:
+                    // super long default range
+                    // thick orange
+                    props.template = orangeBeam;
+                    props.widthMultiplier = 0.7f;
+                    props.range = 1500.0f;
+                    props.colorOverride = false;
+                    break;
+            }
+
+            return props;
+        }
+
+        private readonly static FieldInfo m_CurrentSession = AccessTools.Field(typeof(ManMods), "m_CurrentSession");
+        private readonly static FieldInfo m_RequestedSession = AccessTools.Field(typeof(ManMods), "m_RequestedSession");
+        private readonly static MethodInfo GetCorpIndex = AccessTools.Method(typeof(ManMods), "GetCorpIndex");
+        internal static void PatchGenericLaser(BlockMetadata blockData)
+        {
+            Transform editablePrefab = blockData.blockPrefab;
+
+            FactionSubTypes faction;
+            bool useFlashOverrides = true;
+            if (blockData.VanillaID > 0)
+            {
+                faction = Singleton.Manager<ManSpawn>.inst.GetCorporation(blockData.VanillaID);
+            }
+            else if (blockData.SessionID > 0)
+            {
+                ModSessionInfo loadingSession = (ModSessionInfo)m_CurrentSession.GetValue(Singleton.Manager<ManMods>.inst);
+                ModdedBlockDefinition moddedBlockDefinition = Singleton.Manager<ManMods>.inst.FindModdedAsset<ModdedBlockDefinition>(blockData.BlockID);
+                if (blockData.BlockID.StartsWith("BF Plus Additional Block Pack"))
+                {
+                    useFlashOverrides = false;
+                }
+                faction = (FactionSubTypes) GetCorpIndex.Invoke(Singleton.Manager<ManMods>.inst, new object[] { moddedBlockDefinition.m_Corporation, loadingSession });
+            }
+            else // should only be called on modded blocks, but those should be handled by SessionID
+            {
+                // this is generic, will run 
+                string BlockID = blockData.BlockID;
+                Console.WriteLine($"FAILED to patch detected laser {BlockID}");
+                return;
+            }
+
+            // only give one patch
+            LaserModPatch patch = editablePrefab.GetComponent<LaserModPatch>();
+            if (patch == null)
+            {
+                Console.WriteLine($"Applied generic laser patch to {editablePrefab.name}, corp: {faction}");
+                FireData fireData = editablePrefab.GetComponent<FireData>();
+                LineRenderer laserProjectile = fireData.m_BulletPrefab.GetComponentInChildren<LineRenderer>();
+                PatchProps props = GetPropsByFaction(faction, laserProjectile, useFlashOverrides);
+                patch = editablePrefab.gameObject.AddComponent<LaserModPatch>();
+                patch.props = props;
+                LowLevelApplyPatch(props, editablePrefab.gameObject);
+            }
+        }
+
+        internal static BeamWeapon orangeBeam;
+        internal static BeamWeapon blueBeam;
+        internal static MuzzleFlash BFFlash;
+        internal static ParticleSystem BFHitParticles;
+
+        public static void GenerateChanges()
         {
             if (!IngressPoint.initialized)
             {
                 Console.WriteLine("Patching Laser Weapons");
 
-                BlockPrefabBuilder.GameBlocksByID(1032, out GameObject orangeLaser);
-                BeamWeapon orangeBeam = orangeLaser.GetComponentInChildren<BeamWeapon>();
+                TankBlock orangeLaser = Singleton.Manager<ManSpawn>.inst.GetBlockPrefab((BlockTypes) 1032);
+                orangeBeam = orangeLaser.GetComponentInChildren<BeamWeapon>();
                 defaultTemplate = orangeBeam;
 
-                BlockPrefabBuilder.GameBlocksByID(861, out GameObject blueLaser);
-                BeamWeapon blueBeam = blueLaser.GetComponentInChildren<BeamWeapon>();
+                TankBlock blueLaser = Singleton.Manager<ManSpawn>.inst.GetBlockPrefab((BlockTypes)861);
+                blueBeam = blueLaser.GetComponentInChildren<BeamWeapon>();
 
-                BlockPrefabBuilder.GameBlocksByID(831, out GameObject laserGatling);
-                MuzzleFlash flash = laserGatling.GetComponentInChildren<MuzzleFlash>();
+                TankBlock laserGatling = Singleton.Manager<ManSpawn>.inst.GetBlockPrefab((BlockTypes)831);
+                BFFlash = laserGatling.GetComponentInChildren<MuzzleFlash>();
 
-                ParticleSystem hitParticles = (ParticleSystem) m_BeamParticlesPrefab.GetValue(orangeBeam);
+                BFHitParticles = (ParticleSystem) m_BeamParticlesPrefab.GetValue(orangeBeam);
 
-                PatchProps[] patches = new PatchProps[15] {
+                // vanilla patches
+                PatchProps[] vanillaPatches = new PatchProps[16] {
                     // GSO Cab
                     new PatchProps {
                         laserId = 8,
+                        template = orangeBeam,
+                        widthMultiplier = 0.25f,
+                        colorOverride = true,
+                        color = new Color(127.0f / 255.0f, 64.0f / 255.0f, 1.0f, 1.0f)
+                    },
+                    // GSO Wide Cab
+                    new PatchProps {
+                        laserId = (int) BlockTypes.GSO_Cab_211,
                         template = orangeBeam,
                         widthMultiplier = 0.25f,
                         colorOverride = true,
@@ -330,7 +464,7 @@ namespace LaserMod.src
                         laserId = 681,
                         template = orangeBeam,
                         widthMultiplier = 1.0f,
-                        dpsMultiplier = 1.25f,
+                        dpsMultiplier = 1.5f,
                         colorOverride = true,
                         color = new Color(1.0f, 0.3f, 0.3f, 1.0f)
                     },
@@ -339,53 +473,53 @@ namespace LaserMod.src
                         laserId = 821,
                         template = blueBeam,
                         dpsMultiplier = 0.75f,
-                        flashOverride = flash,
+                        flashOverride = BFFlash,
                         adjustSpawn = new Vector3(0, 0, -0.25f),
-                        hitParticlesOverride = hitParticles
+                        hitParticlesOverride = BFHitParticles
                     },
                     // Streamlined assault laser (112)
                     new PatchProps {
                         laserId = 829,
                         template = blueBeam,
                         dpsMultiplier = 0.65f,
-                        flashOverride = flash,
+                        flashOverride = BFFlash,
                         adjustSpawn = new Vector3(0, 0, -0.25f),
                         adjustMuzzleFlash = new Vector3(0, 0, 0.25f),
-                        hitParticlesOverride = hitParticles
+                        hitParticlesOverride = BFHitParticles
                     },
                     // Speed lance laser (113)
                     new PatchProps {
                         laserId = 830,
                         template = blueBeam,
                         dpsMultiplier = 0.65f,
-                        flashOverride = flash,
+                        flashOverride = BFFlash,
                         adjustSpawn = new Vector3(0, 0, -0.25f),
                         adjustMuzzleFlash = new Vector3(0, 0, 0.5f),
-                        hitParticlesOverride = hitParticles
+                        hitParticlesOverride = BFHitParticles
                     },
                     // Gatling laser
                     new PatchProps {
                         laserId = 831,
                         template = blueBeam,
                         dpsMultiplier = 0.5f,
-                        hitParticlesOverride = hitParticles
+                        hitParticlesOverride = BFHitParticles
                     },
                     // Trapdoor laser
                     new PatchProps {
                         laserId = 857,
                         template = blueBeam,
-                        flashOverride = flash,
+                        flashOverride = BFFlash,
                         adjustSpawn = new Vector3(0, 0, -0.75f),
-                        hitParticlesOverride = hitParticles
+                        hitParticlesOverride = BFHitParticles
                     },
                     // Dot laser (111)
                     new PatchProps {
                         laserId = 885,
                         template = blueBeam,
                         dpsMultiplier = 0.75f,
-                        flashOverride = flash,
+                        flashOverride = BFFlash,
                         adjustSpawn = new Vector3(0, 0, -0.25f),
-                        hitParticlesOverride = hitParticles
+                        hitParticlesOverride = BFHitParticles
                     },
                     // D class laser
                     new PatchProps {
@@ -393,17 +527,17 @@ namespace LaserMod.src
                         template = blueBeam,
                         dpsMultiplier = 2.0f,
                         widthMultiplier = 2.0f,
-                        flashOverride = flash,
+                        flashOverride = BFFlash,
                         adjustSpawn = new Vector3(0, 0.15f, -0.25f),
                         adjustMuzzleFlash = new Vector3(0, 0.15f, 0.25f),
-                        hitParticlesOverride = hitParticles
+                        hitParticlesOverride = BFHitParticles
                     },
                     // BF Cab
                     new PatchProps {
                         laserId = 785,
                         template = blueBeam,
-                        flashOverride = flash,
-                        hitParticlesOverride = hitParticles,
+                        flashOverride = BFFlash,
+                        hitParticlesOverride = BFHitParticles,
                         // adjustSpawn = new Vector3(0, 0, -0.25f)
                     },
                     // BF AI Cab
@@ -411,50 +545,31 @@ namespace LaserMod.src
                     {
                         laserId = 917,
                         template = blueBeam,
-                        flashOverride = flash,
-                        hitParticlesOverride = hitParticles,
+                        flashOverride = BFFlash,
+                        hitParticlesOverride = BFHitParticles,
                     }
                 };
 
-                foreach (PatchProps props in patches)
+                foreach (PatchProps props in vanillaPatches)
                 {
-                    ApplyPatch(props);
+                    Change change = new Change {
+                        id = $"LaserMod {props.laserId}",
+                        targetType = ChangeTargetType.VANILLA_ID,
+                        condition = new VanillaIDConditional((BlockTypes) props.laserId),
+                        patcher = (BlockMetadata blockData) => {
+                            Transform blockPrefab = blockData.blockPrefab;
+                            LaserModPatch patch = blockPrefab.gameObject.AddComponent<LaserModPatch>();
+                            patch.props = props;
+                            LowLevelApplyPatch(props, blockPrefab.gameObject);
+                        }
+                    };
+                    LaserMod.changes.Add(change);
                 }
 
                 IngressPoint.initialized = true;
             }
         }
-
-        public static void Main()
-        {
-            new Harmony("flsoz.ttmm.lasermod.mod").PatchAll(Assembly.GetExecutingAssembly());
-            /* assetBundle = AssetBundle.LoadFromFile(Path.Combine(assets_path, "beams"));
-            beamMaterial = new Material(assetBundle.LoadAsset<Material>("BeamMaterial")); */
-
-            PatchBlocks();
-        }
     }
-
-    [HarmonyPatch(typeof(BlockLoader), "Register", new Type[1] { typeof(CustomBlock) })]
-    public static class PatchBlockRegistration
-    {
-        public static bool Prefix(ref CustomBlock block)
-        {
-            LaserModPatch patch = block.Prefab.GetComponentInChildren<LaserModPatch>();
-            if (patch)
-            {
-                PatchProps props = patch.props;
-                // setup default template
-                if (props.template == null)
-                {
-                    props.template = IngressPoint.defaultTemplate;
-                }
-                IngressPoint.LowLevelApplyPatch(props, block.Prefab);
-            }
-            return true;
-        }
-    }
-
 
     [HarmonyPatch(typeof(BeamWeapon), "OnPool")]
     public static class PatchPool
