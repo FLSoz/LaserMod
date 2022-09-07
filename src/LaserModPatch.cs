@@ -25,7 +25,7 @@ namespace LaserMod.src
             {
                 props.widthMultiplier = 1.0f;
             }
-            IngressPoint.LowLevelApplyPatch(props, base.gameObject);
+            // IngressPoint.LowLevelApplyPatch(props, base.gameObject);
         }
     }
 }

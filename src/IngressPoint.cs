@@ -28,7 +28,7 @@ namespace LaserMod.src
 
     sealed class IngressPoint
     {
-        public static bool hitscan = true;
+        public static bool hitscan = false;
 
         public static BeamWeapon defaultTemplate;
 
@@ -87,7 +87,56 @@ namespace LaserMod.src
 
             if (gun)
             {
+                CannonBarrel[] barrels = target.GetComponentsInChildren<CannonBarrel>(true);
+                int numBarrels = barrels.Length;
+                gun.m_CooldownVariancePct = 0.0f;
                 cooldown = gun.m_ShotCooldown;
+                float minCooldown = 0.2f;
+                // Adjust cooldowns up so that min cooldown is 0.2f
+                if (gun.m_BurstShotCount > 0)
+                {
+                    cooldown += gun.m_BurstCooldown;
+                    if (cooldown < minCooldown) {
+                        if (gun.m_FireControlMode == ModuleWeaponGun.FireControlMode.Sequenced)
+                        {
+                            gun.m_ShotCooldown = minCooldown;
+                            props.dpsMultiplier *= ((minCooldown / numBarrels * gun.m_BurstShotCount + gun.m_BurstCooldown) / (cooldown / numBarrels * gun.m_BurstShotCount + gun.m_BurstCooldown));
+                        }
+                        else if (gun.m_FireControlMode == ModuleWeaponGun.FireControlMode.AllAtOnce)
+                        {
+                            int numCycles = Mathf.CeilToInt(gun.m_BurstShotCount / numBarrels);
+                            float newCycleTime = numCycles * minCooldown;
+                            float oldCycleTime = (numCycles - 1) * gun.m_ShotCooldown + gun.m_BurstCooldown;
+
+                            gun.m_ShotCooldown = minCooldown * numBarrels;
+                            gun.m_BurstCooldown = minCooldown;
+                            props.dpsMultiplier *= newCycleTime / oldCycleTime;
+                        }
+                    }
+                }
+                else
+                {
+                    // no burst
+                    gun.m_BurstCooldown = 0.0f;
+                    if (gun.m_FireControlMode == ModuleWeaponGun.FireControlMode.Sequenced)
+                    {
+                        if (cooldown < minCooldown)
+                        {
+                            gun.m_ShotCooldown = minCooldown;
+                            props.dpsMultiplier *= minCooldown / cooldown;
+                        }
+                    }
+                    else if (gun.m_FireControlMode == ModuleWeaponGun.FireControlMode.AllAtOnce)
+                    {
+                        cooldown = gun.m_ShotCooldown / numBarrels;
+                        if (cooldown < minCooldown)
+                        {
+                            gun.m_ShotCooldown = minCooldown * numBarrels;
+                            props.dpsMultiplier *= minCooldown / cooldown;
+                        }
+                    }
+                }
+                // Console.WriteLine($"  {numBarrels} BARRELS, adjusted to Burst Cooldown {gun.m_BurstCooldown} for {gun.m_BurstShotCount} shots, cooldown {cooldown} ({gun.m_ShotCooldown})");
             }
             if (fireData)
             {
@@ -233,11 +282,11 @@ namespace LaserMod.src
                             m_DamageTypeBeam.SetValue(barrel.beamWeapon, damageType);
                             m_DamagePerSecond.SetValue(barrel.beamWeapon, -damage);
                             // fade out will always take 0.2s, or cooldown / 2.5, whichever is shorter
-                            m_FadeOutTime.SetValue(barrel.beamWeapon, Mathf.Min(0.2f, cooldown / 2.5f));
+                            m_FadeOutTime.SetValue(barrel.beamWeapon, Mathf.Min(0.2f, cooldown / 2f));
                         }
                     }
 
-                    Console.WriteLine($"Range {range}, Damage {damage}, Fire Rate {1 / cooldown} ({cooldown})");
+                    // Console.WriteLine($"Range {range}, Damage {damage}, Fire Rate {1 / cooldown} ({cooldown})");
                     fireData.m_BulletPrefab = null;
                     fireData.m_MuzzleVelocity = 0f;
                 }
@@ -275,7 +324,6 @@ namespace LaserMod.src
             PatchProps props = new PatchProps
             {
                 template = IngressPoint.defaultTemplate,
-                adjustSpawn = new Vector3(0, 0, -0.25f),
                 widthMultiplier = laserProjectile.endWidth * 2.0f,
                 dpsMultiplier = 1.0f,
                 colorOverride = true,
@@ -483,17 +531,17 @@ namespace LaserMod.src
                         template = blueBeam,
                         dpsMultiplier = 0.65f,
                         flashOverride = BFFlash,
-                        adjustSpawn = new Vector3(0, 0, -0.25f),
+                        adjustSpawn = new Vector3(0, 0, -0.1f),
                         adjustMuzzleFlash = new Vector3(0, 0, 0.25f),
                         hitParticlesOverride = BFHitParticles
                     },
                     // Speed lance laser (113)
                     new PatchProps {
-                        laserId = 830,
+                        laserId = (int) BlockTypes.BF_Laser_Streamlined_113,
                         template = blueBeam,
                         dpsMultiplier = 0.65f,
                         flashOverride = BFFlash,
-                        adjustSpawn = new Vector3(0, 0, -0.25f),
+                        adjustSpawn = new Vector3(0, 0, 0.5f),
                         adjustMuzzleFlash = new Vector3(0, 0, 0.5f),
                         hitParticlesOverride = BFHitParticles
                     },
