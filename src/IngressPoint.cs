@@ -7,10 +7,12 @@ using UnityEngine;
 using UnityEngine.Events;
 using System.IO;
 using BlockChangePatcher;
+using ModHelper;
+using Nuterra.NativeOptions;
 
 namespace LaserMod.src
 {
-    [Serializable]
+    [Serializable()]
     public struct PatchProps
     {
         public int laserId;
@@ -26,9 +28,37 @@ namespace LaserMod.src
         public float range;
     }
 
-    sealed class IngressPoint
+    // Do the lead patch
+    internal class LaserModSettings
     {
         public static bool hitscan = false;
+    }
+
+    sealed class IngressPoint
+    {
+        public static ModConfig Config; // It'd be helpful to save the ModConfig class if you'd like to use it later
+
+        const string ModName = "Laser Mod";
+        public static OptionToggle HitscanLasers;
+
+        public static void SetupConfig()
+        {
+            // mod Config
+            Config = new ModConfig();
+            Config.BindConfig<LaserModSettings>(null, "hitscan"); // apply hitscan damage calcs or not
+        }
+
+        public static void SetupUI()
+        {
+            Console.WriteLine("SETTING UP UI");
+
+            // UI
+            HitscanLasers = new OptionToggle("Hitscan Lasers", ModName, LaserModSettings.hitscan);
+            HitscanLasers.onValueSaved.AddListener(() => {
+                LaserModSettings.hitscan = HitscanLasers.SavedValue;
+                Config.WriteConfigJsonFile();
+            });
+        }
 
         public static BeamWeapon defaultTemplate;
 
@@ -47,7 +77,6 @@ namespace LaserMod.src
         private readonly static FieldInfo recoilAnim = typeof(CannonBarrel).GetField("recoilAnim", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private readonly static FieldInfo animState = typeof(CannonBarrel).GetField("animState", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private readonly static FieldInfo m_Animator = typeof(ModuleWeaponGun).GetField("m_Animator", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-
 
         internal struct ParticleColorOverride
         {
@@ -432,6 +461,12 @@ namespace LaserMod.src
                 patch = editablePrefab.gameObject.AddComponent<LaserModPatch>();
                 patch.props = props;
                 LowLevelApplyPatch(props, editablePrefab.gameObject);
+                patch.patched = true;
+            }
+            else if (!patch.patched)
+            {
+                LowLevelApplyPatch(patch.props, editablePrefab.gameObject);
+                patch.patched = true;
             }
         }
 
@@ -661,11 +696,11 @@ namespace LaserMod.src
                 int properDPS = Mathf.FloorToInt(-dps / Mathf.Max(defaultFade, Time.deltaTime));
                 if (fadeTimer == defaultFade)
                 {
-                    damage = IngressPoint.hitscan ? Mathf.FloorToInt(((float)-dps) / Time.deltaTime) : properDPS;
+                    damage = LaserModSettings.hitscan ? Mathf.FloorToInt(((float)-dps) / Time.deltaTime) : properDPS;
                 }
                 else if (fadeTimer > 0f)
                 {
-                    damage = IngressPoint.hitscan ? 0 : Mathf.FloorToInt(properDPS * Mathf.Min(Time.deltaTime, fadeTimer) / Time.deltaTime);
+                    damage = LaserModSettings.hitscan ? 0 : Mathf.FloorToInt(properDPS * Mathf.Min(Time.deltaTime, fadeTimer) / Time.deltaTime);
                     m_FadeTimer.SetValue(__instance, defaultFade);
                 }
                 IngressPoint.m_DamagePerSecond.SetValue(__instance, damage);

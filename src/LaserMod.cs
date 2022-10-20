@@ -78,6 +78,8 @@ namespace LaserMod.src
                     condition = new LaserConditional(),
                     patcher = new Action<BlockMetadata>(IngressPoint.PatchGenericLaser)
                 });
+                IngressPoint.SetupConfig();
+                IngressPoint.SetupUI();
                 Inited = true;
             }
         }
