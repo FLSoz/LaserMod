@@ -673,7 +673,7 @@ namespace LaserMod.src
         }
     }
 
-    [HarmonyPatch(typeof(BeamWeapon), "Update")]
+    [HarmonyPatch(typeof(BeamWeapon), "OnUpdate")]
     public static class PatchLaserBeam
     {
         internal readonly static FieldInfo m_FadeTimer = typeof(BeamWeapon).GetField("m_FadeTimer", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
